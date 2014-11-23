@@ -1,0 +1,211 @@
+---
+title: "Practical Machine Learning Project"
+output: html_document
+---
+## Predicting Weight-Lifting Exercise Performance
+
+### Introduction
+The purpose of this project is to use data collected from sensors to predict the manner in which study participants performed a unilateral dumbbell biceps curl. The responses are divided into the following five classes:
+
+* A -- The exerise was performed correctly.
+* B -- Throwing the elbows to the front.
+* C -- Lifting the dumbbell halfway.
+* D -- Lowering the dumbbell halfway.
+* E -- Throwing the hips to the front.
+
+Details concerning the study can be found at the [Human Activity Recognition Project Page](http://groupware.les.inf.puc-rio.br/har).
+
+Data for the project was obtained from the following links:
+
+* [Training Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+* [Testing Data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+### Data Exploration
+After the data sets were downloaded and imported into R, we see that the training and test sets consist of the following sizes:
+
+```{r, echo=FALSE, cache=TRUE}
+trainFile <- "C:\\Users\\Maria\\Desktop\\Data Science Specialization\\Machine Learning\\Project\\pml-training.csv"
+trainSet <- read.csv(trainFile,stringsAsFactors=FALSE,
+                     na.strings=c("",NA))
+print("Training set dimensions = ")
+print(paste(dim(trainSet)[1],"x",dim(trainSet)[2]))
+testFile <- "C:\\Users\\Maria\\Desktop\\Data Science Specialization\\Machine Learning\\Project\\pml-testing.csv"
+testSet <- read.csv(testFile,stringsAsFactors=FALSE,
+                    na.strings=c("",NA))
+print("Test set dimensions = ")
+print(paste(dim(testSet)[1],"x",dim(testSet)[2]))
+
+```
+
+Visual inspection of the data sets showed a fairly large number of "NA" values. Columns containing the "NAs" were removed. Additionally, variables that obviously have no intuitive predictive relationship to the outcomes were also removed. These steps reduced the number of variables significantly:
+
+```{r, echo=FALSE, cache=TRUE}
+# Find test columns that contain only NAs
+testSet <- testSet[,colSums(is.na(testSet))<nrow(testSet)]
+testVars <- colnames(testSet)
+
+# Remove "problem_id" and keep in "classe" for training set
+testVars <- testVars[which(testVars!="problem_id")]
+testVars[length(testVars)+1] <- "classe"
+
+# Create training data with same vars
+trainSet <- trainSet[,testVars]
+
+# Remove additional vars that won't help.
+rmVarsre <- "X|user_name|timestamp|window"
+trainSet <- trainSet[,-(grep(rmVarsre, colnames(trainSet)))]
+testSet <- testSet[,-(grep(rmVarsre, colnames(testSet)))]
+
+print("New training set dimensions = ")
+print(paste(dim(trainSet)[1],"x",dim(trainSet)[2]))
+print("New test set dimensions = ")
+print(paste(dim(testSet)[1],"x",dim(testSet)[2]))
+```
+
+At this point, the data have been cleaned enough to proceed.
+
+### Model Development
+Four machine learning algorithms were selected for initial performance assessment. These were: Naive Bayes (NB), Decision Trees (DT), Random Forests (RF) and Linear Discriminant Analysis (LDA). *However, as NB took an excessively long time to complete the training, it was excluded from the final analysis.* 
+Since this stage was primarily concerned with determining which of the methods, comparatively, might produce the best results, only a subset of the training data was used at this point. A stratified random sampling of the training set was used to reduce it to 30% of its original size. Then, this set was again divided by a stratified random process to produce a training set of 60% of the data and a validation set of 40% of the data. These reduced sets have the following number of examples:
+```{r,echo=FALSE,cache=TRUE,results='hide'}
+library(caret)
+library(randomForest)
+```
+
+```{r,echo=FALSE,cache=TRUE}
+# Set the seed for reproducible examples.
+set.seed(1234)
+
+# Randomly select only 30% of data to start training
+redInd <- createDataPartition(trainSet$classe,
+                                 p=.3,list=FALSE)
+redSet <- trainSet[redInd,]
+
+# Sample again to get reduced train/test set of 60/40
+trainInd <- createDataPartition(redSet$classe,
+                                p=.6,list=FALSE)
+training <- redSet[trainInd,]
+testing <- redSet[-trainInd,]
+# Set the response variable to a factor
+training$classe <- factor(training$classe)
+testing$classe <- factor(testing$classe)
+# Set the class labels
+trainLabels <- training$classe
+testLabels <- testing$classe
+print(paste("Training set has ",nrow(training)," examples."))
+print(paste("Validation set has ",nrow(testing)," examples."))
+```
+
+#### Early Results
+
+This exploratory modeling was performed using a bootstrap process with the response variable ("classe") fitted on all of the predictors.
+
+
+##### Decision Trees
+
+A decision tree was created on the reduced training set and used to predict the validation set. The results are given below and summarized in the plot.
+
+```{r,echo=FALSE,cache=TRUE}
+# Decision trees
+treeFit <- train(classe ~ ., data=training, method="rpart")
+treePreds <- predict(treeFit,testing)
+treeCM <- confusionMatrix(treePreds,testLabels)
+print(treeCM)
+plot(treeFit,main="Decision Tree")
+```
+
+We can see that the decision tree does not seem to produce acceptable results, with an overall accuracy of only 55%.
+
+##### Linear Discriminant Analysis
+
+Next, we perform the same process using LDA, with the following results. We can easily see that, without any further tuning, LDA performs quite a bit better than the decision tree, with an accuracy of 71%.
+
+```{r,echo=FALSE,cache=TRUE}
+ldaFit <- train(classe ~ ., data=training, method="lda")
+ldaPreds <- predict(ldaFit,testing)
+ldaCM <- confusionMatrix(ldaPreds, testLabels)
+print(ldaCM)
+```
+
+##### Random Forests
+
+Our final model to test is random forests. Performance statistics are shown below.
+
+```{r,echo=FALSE,cache=TRUE}
+rfFit <- randomForest(classe ~ ., data=training,
+                        importance=TRUE, ntree=300)
+rfPreds <- predict(rfFit, testing)
+rfCM <- confusionMatrix(rfPreds,testLabels)
+print(rfCM)
+```
+
+At this point, random forests clearly outperforms the other models with an accuracy of 97%; therefore, we select the random forest model to continue refinement and training. The first thing we want to do is rebuild and validate the model using the entire training set. Again, the training portion of the data is set to 60% and the validation size is set to 40%. The new data sizes are shown below.
+
+```{r,echo=FALSE,cache=TRUE}
+redSet <- trainSet
+trainInd <- createDataPartition(redSet$classe,
+                                p=.6,list=FALSE)
+training <- redSet[trainInd,]
+testing <- redSet[-trainInd,]
+training$classe <- factor(training$classe)
+testing$classe <- factor(testing$classe)
+trainLabels <- training$classe
+testLabels <- testing$classe
+print(paste("Training set has ",nrow(training)," examples."))
+print(paste("Validation set has ",nrow(testing)," examples."))
+```
+
+Now, we rebuild the random forest model, this time using a 5-fold cross-validation process to get a better idea of how we can expect the model to perform on out-of-sample data. We also limit the number of trees to 300.
+
+```{r,echo=FALSE,cache=TRUE}
+# Set the training control parameters.
+tControl <- trainControl(method="cv", number=5)
+rfFit <- randomForest(classe ~ ., data=training,
+                        importance=TRUE, ntree=300,
+                      trainControl=tControl)
+print("The Random Forest Model:")
+print(rfFit)
+rfPreds <- predict(rfFit, testing)
+print("Performance on the validation set:")
+rfCM <- confusionMatrix(rfPreds,testLabels)
+print(rfCM)
+plot(rfFit,main="Eror Rate for Random Forest Model")
+```
+
+With the resulting accuracy rate of 99%, a significant p-value and good kappa value, this model seems to be a very good fit. 
+We also see that the expected out-of-sample (OOB) error is 60%.
+
+At this point, we want to do a little more exploration before accepting it as the final model.
+First, we want to see if it would be helpful to remove any of the predictors. We do this by running two tests: (1) checking for variables that have near-zero variance, and (2) looking at the relative importance of the variables to the model. Using the function, "nearZeroVar", we obtain the following result:
+
+```{r,echo=FALSE,cache=TRUE}
+nz <- nearZeroVar(training, saveMetrics=TRUE)
+print(paste("There are ",sum(nz$nzv)," predictors with near zero variance."))
+```
+
+This is a good indicator that our predictor set is a solid one, but we will also look at the importance of the various predictors to the model (only the top 20 are plotted to improve visibility).
+
+```{r,echo=FALSE,cache=TRUE}
+varImpPlot(rfFit, n.var=20)
+```
+
+Although we can see from this plot that several of the variables seem to not have a significant effect on the overall decrease in accuracy, because our initial result is extremely good and we know that all the predictors have a significant variance, we choose to keep this set of 53 predictors for our final test.
+
+#### The Final Test
+Now that we have a model that performs well on our validation set, it is time to try it on the final test set.
+
+```{r,echo=FALSE,cache=TRUE}
+# Use the Random Forest model to predict the
+# real test set.
+realPred <- predict(rfFit, testSet)
+print("The test predictions are: ")
+print(realPred)
+```
+
+These results were verified by the assignment submission to be 100% accurate, showing that the model was, indeed, a good fit for the data.
+
+#### Summary
+This project utilized a set of sensor data to predict a performance class for a dumbbell biceps curl. The original set of 160 variables was reduced to 53 by eliminating columns of NA values and other values that were not intuitively useful for prediction. A small percentage (30%) of this data was initially used to explore the performance of four different machine learning algorithms using a bootstrap training method on 60% of the reduced set, with 40% reserved for validation of the models. 
+Using these results, random forests significantly outperformed the others, and was chosen for further exploration. We re-fit a random forest using 60% of the entire data set for training and using 3-fold cross-validation to provide a good estimate of the out-of-sample error rate, which had a value of 60%. Running this model on the reserved 40% of the data gave us an accuracy of 99% with good kappa and p-values. Though there was some indication that the predictor set could be reduced, we elected to keep all the predictors, as none resulted in a near-zero variance.
+This model was run on the final test set and was able to predict the classes with 100% accuracy.
